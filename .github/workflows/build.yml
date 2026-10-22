@@ -90,9 +90,9 @@ jobs:
           }
 
           # Выборочные патчи с репозитория https://github.com/FiyeroT/podkop-engine
-          apply_patch "0001-reality" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0001-reality-keep-X25519MLKEM768-key-share-announce-clien.patch"
-          apply_patch "0002-utls" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0002-utls-firefox-Firefox-148-safari-Safari-26.3-as-Xray-.patch"
-          apply_patch "0010-randomized" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0010-utls-keep-the-randomized-fingerprint-consistent.patch"
+          apply_patch "0001-reality.patch" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0001-reality-keep-X25519MLKEM768-key-share-announce-clien.patch"
+          apply_patch "0002-utls.patch" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0002-utls-firefox-Firefox-148-safari-Safari-26.3-as-Xray-.patch"
+          apply_patch "0010-randomized.patch" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0010-utls-keep-the-randomized-fingerprint-consistent.patch"
 
       - name: Save patches to repository
         env:
