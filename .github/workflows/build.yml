@@ -106,6 +106,8 @@ jobs:
             echo "No patch changes to commit"
           else
             git commit -m "Update patches for v${VERSION}"
+            git fetch origin ${{ github.ref_name }}
+            git rebase origin/${{ github.ref_name }} || true
             git push --force-with-lease origin HEAD:${{ github.ref_name }}
           fi
 
