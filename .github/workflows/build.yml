@@ -106,7 +106,7 @@ jobs:
             echo "No patch changes to commit"
           else
             git commit -m "Update patches for v${VERSION}"
-            git push origin HEAD:${{ github.ref_name }}
+            git push --force-with-lease origin HEAD:${{ github.ref_name }}
           fi
 
       - name: Setup Go
