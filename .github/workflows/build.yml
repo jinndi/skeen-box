@@ -19,6 +19,8 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}${{ matrix.naive && ' + Naive' || '' }}${{ matrix.upx && ' + UPX' || '' }} binary
     runs-on: ubuntu-26.04
+    permissions:
+      contents: write
     env:
       BUILD_TAGS: "with_gvisor,with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
     strategy:
@@ -62,10 +64,12 @@ jobs:
         working-directory: sing-box
         shell: bash
         run: |
+          rm -rf ../.github/patches
+          mkdir -p ../.github/patches
           apply_patch() {
             local name="$1"
             local url="$2"
-            local file="/tmp/${name}.patch"
+            local file="../.github/patches/${name}.patch"
 
             echo "::group::Applying ${name}"
 
@@ -89,6 +93,21 @@ jobs:
           apply_patch "0001-reality" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0001-reality-keep-X25519MLKEM768-key-share-announce-clien.patch"
           apply_patch "0002-utls" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0002-utls-firefox-Firefox-148-safari-Safari-26.3-as-Xray-.patch"
           apply_patch "0010-randomized" "https://raw.githubusercontent.com/FiyeroT/podkop-engine/refs/heads/main/patches/v1.14/0010-utls-keep-the-randomized-fingerprint-consistent.patch"
+
+      - name: Save patches to repository
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/patches
+          if git diff --cached --quiet; then
+            echo "No patch changes to commit"
+          else
+            git commit -m "Update patches for v${VERSION}"
+            git push
+          fi
 
       - name: Setup Go
         uses: actions/setup-go@v5
