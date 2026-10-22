@@ -69,7 +69,7 @@ jobs:
           apply_patch() {
             local name="$1"
             local url="$2"
-            local file="../.github/patches/${name}.patch"
+            local file="../.github/patches/$(basename "$url")"
 
             echo "::group::Applying ${name}"
 
@@ -106,7 +106,7 @@ jobs:
             echo "No patch changes to commit"
           else
             git commit -m "Update patches for v${VERSION}"
-            git push
+            git push origin HEAD:${{ github.ref_name }}
           fi
 
       - name: Setup Go
