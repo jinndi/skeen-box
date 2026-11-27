@@ -2,61 +2,121 @@ name: Build SKeen-Box binaries
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version without the v prefix"
-        required: true
-        type: string
+  schedule:
+    - cron: '0 0 */3 * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: skeen-box-${{ inputs.version }}
+  group: skeen-box-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build ${{ matrix.arch }}${{ matrix.naive && ' + Naive' || '' }}${{ matrix.upx && ' + UPX' || '' }} binary
+  discover:
+    name: Find upstream releases missing locally
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      has_versions: ${{ steps.select.outputs.has_versions }}
+      versions: ${{ steps.select.outputs.versions }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Select latest stable and prerelease versions
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          upstream_tags=$(gh api --paginate "repos/SagerNet/sing-box/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | .tag_name')
+          existing_tags=$(gh api --paginate "repos/${REPOSITORY}/releases?per_page=100" \
+            --jq '.[].tag_name')
+
+          latest_stable=""
+          latest_prerelease=""
+          while IFS= read -r tag; do
+            if [[ -z "${latest_stable}" && "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              latest_stable="${tag}"
+            elif [[ -z "${latest_prerelease}" && "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)([.-][0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              latest_prerelease="${tag}"
+            fi
+            if [[ -n "${latest_stable}" && -n "${latest_prerelease}" ]]; then
+              break
+            fi
+          done <<< "${upstream_tags}"
+
+          versions=()
+          for upstream_tag in "${latest_stable}" "${latest_prerelease}"; do
+            [[ -n "${upstream_tag}" ]] || continue
+
+            version="${upstream_tag#v}"
+            release_version="${version%%+*}-skb"
+            if [[ "${version}" == *+* ]]; then
+              release_version+="-${version#*+}"
+            fi
+            release_tag="v${release_version}"
+
+            if grep -Fxq "${release_tag}" <<< "${existing_tags}"; then
+              echo "${release_tag} already exists; skipping"
+            else
+              versions+=("${version}")
+            fi
+          done
+
+          if (( ${#versions[@]} == 0 )); then
+            echo "No new stable or alpha releases to build"
+            echo "has_versions=false" >> "${GITHUB_OUTPUT}"
+            echo 'versions=["none"]' >> "${GITHUB_OUTPUT}"
+            echo 'matrix={"include":[{"version":"none","arch":"arm64","naive":false,"upx":false}]}' \
+              >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          versions_json=$(printf '%s\n' "${versions[@]}" | jq -R . | jq -sc .)
+          matrix_json=$(jq -cn --argjson versions "${versions_json}" '
+            {include: [
+              $versions[] as $version |
+              {version: $version, arch: "arm64", variant: "musl", naive: true, upx: true},
+              {version: $version, arch: "arm64", upx: true},
+              {version: $version, arch: "mipsle", gomips: "softfloat", variant: "musl", naive: true, upx: true},
+              {version: $version, arch: "mipsle", gomips: "softfloat", upx: true},
+              {version: $version, arch: "mips", gomips: "softfloat", upx: true}
+            ]}
+          ')
+
+          echo "has_versions=true" >> "${GITHUB_OUTPUT}"
+          echo "versions=${versions_json}" >> "${GITHUB_OUTPUT}"
+          echo "matrix=${matrix_json}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build ${{ matrix.version }} ${{ matrix.arch }}${{ matrix.naive && ' + Naive' || '' }}${{ matrix.upx && ' + UPX' || '' }} binary
+    needs: [discover]
+    if: needs.discover.outputs.has_versions == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
     env:
       BUILD_TAGS: "with_gvisor,with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
     strategy:
       fail-fast: false
       max-parallel: 6
-      matrix:
-        include:
-          - { arch: arm64, variant: musl, naive: true, upx: true }
-          - { arch: arm64, upx: true }
-          - { arch: mipsle, gomips: softfloat, variant: musl, naive: true, upx: true }
-          - { arch: mipsle, gomips: softfloat, upx: true }
-          - { arch: mips, gomips: softfloat, upx: true }
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
     steps:
-      - name: Checkout workflow and patches
+      - name: Checkout workflow repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - name: Validate upstream version
-        id: version
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid sing-box version: ${VERSION_INPUT}" >&2
-            exit 1
-          fi
-          echo "value=${VERSION_INPUT}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout upstream sing-box tag
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           repository: SagerNet/sing-box
-          ref: v${{ steps.version.outputs.value }}
+          ref: v${{ matrix.version }}
           path: sing-box
           persist-credentials: false
 
@@ -109,11 +169,12 @@ jobs:
 
       - name: Set target build tags
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ matrix.version }}
         run: |
           set -xeuo pipefail
           TAGS="${BUILD_TAGS}"
-          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          VERSION_CORE="${VERSION%%+*}"
+          if [[ ! "${VERSION_CORE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             TAGS=",${TAGS},"
             TAGS="${TAGS/,with_gvisor,/}"
             TAGS="${TAGS#,}"
@@ -148,13 +209,17 @@ jobs:
           mkdir -p ../dist
 
           BINARY_NAME="skeen-box_${VERSION}_linux_${GOARCH}"
+          BUILD_VERSION="${VERSION%%+*}-skb"
+          if [[ "${VERSION}" == *+* ]]; then
+            BUILD_VERSION+="-${VERSION#*+}"
+          fi
 
           if [[ "${{ matrix.naive }}" == "true" ]]; then
             BINARY_NAME="${BINARY_NAME}_naive"
           fi
 
           go build -v -trimpath -o "../dist/${BINARY_NAME}" -tags "${BUILD_TAGS}" \
-            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${{ inputs.version }}-skb' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${BUILD_VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
             ./cmd/sing-box
 
           if [[ "${UPX_VARIANT}" == "true" ]]; then
@@ -173,7 +238,7 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           GOMIPS: ${{ matrix.gomips }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ matrix.version }}
           VARIANT: ${{ matrix.variant }}
           UPX_VARIANT: ${{ matrix.upx }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -181,15 +246,20 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: skeen-box-${{ matrix.arch }}${{ matrix.naive && '-naive' || '' }}
+          name: skeen-box-${{ matrix.version }}-${{ matrix.arch }}${{ matrix.naive && '-naive' || '' }}
           path: dist/skeen-box_*
           if-no-files-found: error
           compression-level: 0
 
   release:
-    name: Upload binaries to GitHub Release
+    name: Publish ${{ matrix.version }} release
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [discover, build]
+    if: needs.discover.outputs.has_versions == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.discover.outputs.versions) }}
     permissions:
       contents: write
       actions: read
@@ -203,14 +273,14 @@ jobs:
       - name: Download all binary artifacts
         uses: actions/download-artifact@v5
         with:
-          pattern: skeen-box-*
+          pattern: skeen-box-${{ matrix.version }}-*
           path: dist
           merge-multiple: true
 
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ matrix.version }}
           RELEASE_NOTES: |
             sing-box binaries for Keenetic routers.
 
@@ -232,7 +302,7 @@ jobs:
         run: |
           set -xeuo pipefail
           shopt -s nullglob
-          binaries=(dist/skeen-box_*)
+          binaries=(dist/skeen-box_${VERSION}_*)
           if (( ${#binaries[@]} == 0 )); then
             echo "No Keenetic binaries were downloaded" >&2
             exit 1
@@ -247,9 +317,14 @@ jobs:
             ' | sort -t "$(printf '\t')" -k1,1n -k2 | cut -f2-))
           unset IFS
 
-          tag="v${VERSION}"
+          release_version="${VERSION%%+*}-skb"
+          if [[ "${VERSION}" == *+* ]]; then
+            release_version+="-${VERSION#*+}"
+          fi
+          tag="v${release_version}"
           is_prerelease=false
-          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          VERSION_CORE="${VERSION%%+*}"
+          if [[ ! "${VERSION_CORE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             is_prerelease=true
           fi
           common_build_tags='`with_quic`, `with_utls`, `with_clash_api`, `badlinkname`, `tfogo_checklinkname0`'
@@ -262,13 +337,13 @@ jobs:
             release_id=$(gh release view "$tag" --json databaseId --jq .databaseId)
             gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
               --method PATCH \
-              -F "name=${VERSION}" \
+              -F "name=${release_version}" \
               -F "body=${RELEASE_NOTES}" \
               -F "prerelease=${is_prerelease}"
             gh release upload "$tag" "${binaries[@]}" --clobber
           else
             release_flags=(
-              --title "${VERSION}"
+              --title "${release_version}"
               --notes "$RELEASE_NOTES"
               --target "$GITHUB_SHA"
             )
