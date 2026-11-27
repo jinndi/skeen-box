@@ -129,7 +129,7 @@ jobs:
             TAGS="${TAGS},with_musl"
           fi
           echo "BUILD_TAGS=${TAGS}" >> "$GITHUB_ENV"
-          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat sing-box/release/LDFLAGS)" >> "$GITHUB_ENV"
 
       - name: Install UPX
         if: matrix.upx
