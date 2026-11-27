@@ -31,9 +31,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          upstream_tags=$(gh api --paginate "repos/SagerNet/sing-box/releases?per_page=100" \
+          gh_api_with_retry() {
+            local attempt=1 max_attempts=5 delay=2 response
+            while true; do
+              if response=$(gh api "$@" 2>"${RUNNER_TEMP}/gh-api-error"); then
+                printf '%s\n' "${response}"
+                return 0
+              fi
+
+              echo "::warning::GitHub API request failed (attempt ${attempt}/${max_attempts}): $(cat "${RUNNER_TEMP}/gh-api-error")"
+              if (( attempt >= max_attempts )); then
+                return 1
+              fi
+              sleep "${delay}"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          upstream_tags=$(gh_api_with_retry --paginate "repos/SagerNet/sing-box/releases?per_page=100" \
             --jq '.[] | select(.draft == false) | .tag_name')
-          existing_tags=$(gh api --paginate "repos/${REPOSITORY}/releases?per_page=100" \
+          existing_tags=$(gh_api_with_retry --paginate "repos/${REPOSITORY}/releases?per_page=100" \
             --jq '.[].tag_name')
 
           latest_stable=""
