@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     name: Build ${{ matrix.arch }}${{ matrix.naive && ' + Naive' || '' }}${{ matrix.upx && ' + UPX' || '' }} binary
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
@@ -173,7 +173,6 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           GOMIPS: ${{ matrix.gomips }}
-          GOMIPS64: ${{ matrix.gomips }}
           VERSION: ${{ inputs.version }}
           VARIANT: ${{ matrix.variant }}
           UPX_VARIANT: ${{ matrix.upx }}
