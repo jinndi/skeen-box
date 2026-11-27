@@ -54,7 +54,12 @@ jobs:
             [[ -n "${upstream_tag}" ]] || continue
 
             version="${upstream_tag#v}"
-            release_version="${version%%+*}-skb"
+            version_core="${version%%+*}"
+            if [[ "${version_core}" == *-* ]]; then
+              release_version="${version_core%%-*}-skb-${version_core#*-}"
+            else
+              release_version="${version_core}-skb"
+            fi
             if [[ "${version}" == *+* ]]; then
               release_version+="-${version#*+}"
             fi
@@ -208,11 +213,16 @@ jobs:
           set -xeuo pipefail
           mkdir -p ../dist
 
-          BINARY_NAME="skeen-box_${VERSION}_linux_${GOARCH}"
-          BUILD_VERSION="${VERSION%%+*}-skb"
+          VERSION_CORE="${VERSION%%+*}"
+          if [[ "${VERSION_CORE}" == *-* ]]; then
+            BUILD_VERSION="${VERSION_CORE%%-*}-skb-${VERSION_CORE#*-}"
+          else
+            BUILD_VERSION="${VERSION_CORE}-skb"
+          fi
           if [[ "${VERSION}" == *+* ]]; then
             BUILD_VERSION+="-${VERSION#*+}"
           fi
+          BINARY_NAME="sing-box_${BUILD_VERSION}_linux_${GOARCH}"
 
           if [[ "${{ matrix.naive }}" == "true" ]]; then
             BINARY_NAME="${BINARY_NAME}_naive"
@@ -246,8 +256,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: skeen-box-${{ matrix.version }}-${{ matrix.arch }}${{ matrix.naive && '-naive' || '' }}
-          path: dist/skeen-box_*
+          name: sing-box-${{ matrix.version }}-${{ matrix.arch }}${{ matrix.naive && '-naive' || '' }}
+          path: dist/sing-box_*
           if-no-files-found: error
           compression-level: 0
 
@@ -273,7 +283,7 @@ jobs:
       - name: Download all binary artifacts
         uses: actions/download-artifact@v5
         with:
-          pattern: skeen-box-${{ matrix.version }}-*
+          pattern: sing-box-${{ matrix.version }}-*
           path: dist
           merge-multiple: true
 
@@ -302,7 +312,16 @@ jobs:
         run: |
           set -xeuo pipefail
           shopt -s nullglob
-          binaries=(dist/skeen-box_${VERSION}_*)
+          VERSION_CORE="${VERSION%%+*}"
+          if [[ "${VERSION_CORE}" == *-* ]]; then
+            release_version="${VERSION_CORE%%-*}-skb-${VERSION_CORE#*-}"
+          else
+            release_version="${VERSION_CORE}-skb"
+          fi
+          if [[ "${VERSION}" == *+* ]]; then
+            release_version+="-${VERSION#*+}"
+          fi
+          binaries=(dist/sing-box_${release_version}_*)
           if (( ${#binaries[@]} == 0 )); then
             echo "No Keenetic binaries were downloaded" >&2
             exit 1
@@ -317,10 +336,6 @@ jobs:
             ' | sort -t "$(printf '\t')" -k1,1n -k2 | cut -f2-))
           unset IFS
 
-          release_version="${VERSION%%+*}-skb"
-          if [[ "${VERSION}" == *+* ]]; then
-            release_version+="-${VERSION#*+}"
-          fi
           tag="v${release_version}"
           is_prerelease=false
           VERSION_CORE="${VERSION%%+*}"
